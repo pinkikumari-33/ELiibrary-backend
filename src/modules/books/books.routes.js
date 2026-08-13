@@ -17,6 +17,9 @@ const authenticate =
 const allowRoles =
     require("../../middleware/role.middleware");
 
+const bookFileUpload =
+require("../../middleware/bookFileUpload.middleware");
+
 const {
     createBookValidation,
     bookIDValidation,
@@ -44,7 +47,8 @@ const bookController =
 router.post(
     "/",
     authenticate,
-    allowRoles("LIBRARIAN", "ADMIN"),
+    allowRoles("ADMIN", "LIBRARIAN"),
+    bookFileUpload.single("bookFile"),
     createBookValidation,
     bookController.createBook
 );
@@ -78,5 +82,11 @@ router.delete(
     bookController.removeBook
 );
 
+
+router.get(
+    "/:bookID/read",
+    authenticate,
+    bookController.readBook
+);
 
 module.exports = router;

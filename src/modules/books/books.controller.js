@@ -1,13 +1,16 @@
 const { validationResult } = require("express-validator");
+const path = require("path");
 
 /**
- * HTTP layer for the book catalog. Create/delete are staff-only
- * (enforced by middleware in books.routes.js); browsing is public.
+ * HTTP layer for the book catalog.
+ * Create/delete are staff-only (enforced by middleware in books.routes.js);
+ * browsing is public.
  */
 
 class BookController {
 
     constructor(bookService) {
+
         this.bookService = bookService;
 
         this.createBook = this.createBook.bind(this);
@@ -15,6 +18,7 @@ class BookController {
         this.getBookByID = this.getBookByID.bind(this);
         this.searchBooks = this.searchBooks.bind(this);
         this.removeBook = this.removeBook.bind(this);
+        this.readBook = this.readBook.bind(this);
     }
 
     /**
@@ -36,7 +40,10 @@ class BookController {
             }
 
             const createdBook =
-                await this.bookService.createBook(req.body);
+                await this.bookService.createBook(
+                    req.body,
+                    req.file
+                );
 
             return res.status(201).json({
                 success: true,
@@ -138,7 +145,7 @@ class BookController {
      * GET /books/search?keyword=
      * Keyword search across title, author, and description.
      */
-    
+
     async searchBooks(req, res) {
 
         try {
@@ -176,6 +183,11 @@ class BookController {
     }
 
 
+    /**
+     * DELETE /books/:bookID
+     * Soft-deletes a book.
+     */
+
     async removeBook(req, res) {
 
         try {
@@ -205,6 +217,42 @@ class BookController {
             console.error(error);
 
             return res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+
+
+    /**
+     * GET /books/:bookID/read
+     * Returns the stored book file.
+     * Authentication is enforced in the route.
+     */
+
+    async readBook(req, res) {
+
+        try {
+
+            const bookID =
+                Number(req.params.bookID);
+
+            const book =
+                await this.bookService.getBookFile(bookID);
+
+            const absoluteFilePath =
+                path.join(
+                    process.cwd(),
+                    book.filePath
+                );
+
+            return res.sendFile(absoluteFilePath);
+
+        } catch (error) {
+
+            console.error(error);
+
+            return res.status(404).json({
                 success: false,
                 message: error.message
             });

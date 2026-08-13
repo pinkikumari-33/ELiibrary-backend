@@ -21,10 +21,13 @@ class BookRepository {
             description,
             categoryID,
             total_copies,
-            available_copies
+            filePath,
+            fileName,
+            fileType
         } = bookData;
-
-        const [result] = await db.query(`
+    
+        const [result] = await db.query(
+            `
             INSERT INTO books (
                 title,
                 author,
@@ -32,19 +35,25 @@ class BookRepository {
                 description,
                 categoryID,
                 total_copies,
-                available_copies
+                filePath,
+                fileName,
+                fileType
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [
-            title,
-            author,
-            isbn || null,
-            description || null,
-            categoryID || null,
-            total_copies,
-            available_copies
-        ]);
-
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [
+                title,
+                author,
+                isbn,
+                description,
+                categoryID,
+                total_copies,
+                filePath,
+                fileName,
+                fileType
+            ]
+        );
+    
         return result.insertId;
     }
 
@@ -222,6 +231,26 @@ class BookRepository {
         `, [bookID]);
 
         return result.affectedRows;
+    }
+
+    async findBookFile(bookID) {
+
+        const [rows] = await db.query(
+            `
+            SELECT
+                bookID,
+                title,
+                filePath,
+                fileName,
+                fileType
+            FROM books
+            WHERE bookID = ?
+            LIMIT 1
+            `,
+            [bookID]
+        );
+    
+        return rows[0] || null;
     }
 }
 

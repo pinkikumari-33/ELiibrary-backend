@@ -17,7 +17,7 @@ class BookService {
      * pointed at a missing or inactive category.
      */
 
-    async createBook(bookData) {
+    async createBook(bookData, uploadedFile) {
 
         const {
             title,
@@ -27,51 +27,40 @@ class BookService {
             categoryID,
             total_copies
         } = bookData;
+    
+        let filePath = null;
+        let fileName = null;
+        let fileType = null;
+    
+        if (uploadedFile) {
 
-        // Check whether ISBN is already registered
-
-        if (isbn) {
-
-            const existingBook =
-                await this.bookRepository.findBookByISBN(isbn);
-
-            if (existingBook) {
-                throw new Error("A book with this ISBN already exists.");
-            }
+            filePath =
+                `uploads/books/${uploadedFile.filename}`;
+        
+            fileName =
+                uploadedFile.originalname;
+        
+            const extension =
+                uploadedFile.originalname
+                    .split(".")
+                    .pop()
+                    .toUpperCase();
+        
+            fileType = extension;
         }
-
-        // Check category only when one is provided
-        if (categoryID) {
-
-            const selectedCategory =
-                await this.categoryRepository.findCategoryById(categoryID);
-
-            if (!selectedCategory) {
-                throw new Error("Selected category does not exist.");
-            }
-
-            if (selectedCategory.status !== "ACTIVE") {
-                throw new Error("Selected category is inactive.");
-            }
-        }
-
-        // New books start with all copies available
-        const available_copies = total_copies;
-
-        const newBookID =
-            await this.bookRepository.createBook({
-                title,
-                author,
-                isbn,
-                description,
-                categoryID,
-                total_copies,
-                available_copies
-            });
-
-        return await this.bookRepository.findBookByID(newBookID);
+    
+        return await this.bookRepository.createBook({
+            title,
+            author,
+            isbn,
+            description,
+            categoryID,
+            total_copies,
+            filePath,
+            fileName,
+            fileType
+        });
     }
-
 
     /**
      * Lists active books, applying any category/author/availability
@@ -160,6 +149,22 @@ class BookService {
             bookID,
             message: "Book deactivated successfully."
         };
+    }
+
+    async getBookFile(bookID) {
+
+        const book =
+            await this.bookRepository.findBookFile(bookID);
+    
+        if (!book) {
+            throw new Error("Book not found.");
+        }
+    
+        if (!book.filePath) {
+            throw new Error("This book does not have a file.");
+        }
+    
+        return book;
     }
 }
 
