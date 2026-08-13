@@ -7,7 +7,7 @@ A REST API for an **online library (e-library)** — members can browse, search,
 - [Tech Stack](#tech-stack)
 - [Architecture & Approach](#architecture--approach)
 - [Project Structure](#project-structure)
-- [Setup Instructions (Run on Any Machine)](#setup-instructions-run-on-any-machine)
+- [Setup Instructions](#setup-instructions-run-on-any-machine)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
 - [Implemented Features](#implemented-features)
@@ -77,7 +77,7 @@ src/
     └── ai/                         # AI-generated book summaries (with DB caching)
 ```
 
-## Setup Instructions (Run on Any Machine)
+## Setup Instructions
 
 ### Prerequisites
 
