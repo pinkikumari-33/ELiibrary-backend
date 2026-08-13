@@ -1,13 +1,13 @@
-### Library Management System API
+## Library Management System API
 
 A REST API for an **online library (e-library)** — members can browse, search, and read/download digital books (PDF/EPUB), while librarians and admins manage the catalog and staff accounts. Built with Node.js, Express, and MySQL, with JWT authentication, role-based access control, and AI-generated book summaries.
 
-### Table of Contents
+## Table of Contents
 
 - [Tech Stack](#tech-stack)
 - [Architecture & Approach](#architecture--approach)
 - [Project Structure](#project-structure)
-- [Setup Instructions](#setup-instructions-run-on-any-machine)
+- [Setup Instructions (Run on Any Machine)](#setup-instructions-run-on-any-machine)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
 - [Implemented Features](#implemented-features)
@@ -16,7 +16,7 @@ A REST API for an **online library (e-library)** — members can browse, search,
 - [Assumptions](#assumptions)
 - [Possible Enhancements](#possible-enhancements)
 
-### Tech Stack
+## Tech Stack
 
 | Layer            | Technology                              |
 |-------------------|-------------------------------------------|
@@ -28,7 +28,7 @@ A REST API for an **online library (e-library)** — members can browse, search,
 | File uploads     | `multer` (disk storage)                   |
 | AI Integration   | OpenAI-compatible chat completions API    |
 
-### Architecture & Approach
+## Architecture & Approach
 
 The codebase follows a **layered, modular architecture**. Each domain (`auth`, `users`, `categories`, `books`, `ai`) is a self-contained module under `src/modules/`, and every module is split into four layers:
 
@@ -47,7 +47,7 @@ A single shared MySQL connection pool (`src/config/databaseConfig.js`) is import
 
 **File handling approach:** book files are uploaded via `multipart/form-data`, validated and stored on local disk by a dedicated `multer` middleware (`bookFileUpload.middleware.js`), and only the resulting path/name/type are persisted in the `books` table — the database never stores file bytes. Reading a book streams that stored file back through an authenticated endpoint rather than exposing the uploads folder directly.
 
-### Project Structure
+## Project Structure
 
 ```
 src/
@@ -77,15 +77,15 @@ src/
     └── ai/                         # AI-generated book summaries (with DB caching)
 ```
 
-### Setup Instructions
+## Setup Instructions (Run on Any Machine)
 
-#### Prerequisites
+### Prerequisites
 
 - **Node.js 18+** and npm
 - A running **MySQL server** (local install, Docker container, or a cloud instance)
 - An **OpenAI-compatible API key** (only required for the AI summary feature — everything else works without it)
 
-#### 1. Get the code onto the machine
+### 1. Get the code onto the machine
 
 Clone the repository (or copy the project folder) onto the target machine, then move into it:
 
@@ -94,7 +94,7 @@ git clone <your-repository-url>
 cd <project-folder>
 ```
 
-#### 2. Install dependencies
+### 2. Install dependencies
 
 ```bash
 npm install
@@ -102,7 +102,7 @@ npm install
 
 This installs Express, MySQL driver, JWT/bcrypt, express-validator, multer, cors, and dotenv as listed in `package.json`.
 
-#### 3. Configure environment variables
+### 3. Configure environment variables
 
 Copy the example file and fill in your own values:
 
@@ -112,7 +112,7 @@ cp .env.example .env
 
 See [Environment Variables](#environment-variables) below for what each one means. At minimum you must set the `DB_*` values to match a MySQL server this machine can reach, and `JWT_SECRET` to any long random string.
 
-#### 4. Create an empty database
+### 4. Create an empty database
 
 Log into MySQL on the target machine and create a database matching `DB_NAME`:
 
@@ -120,7 +120,7 @@ Log into MySQL on the target machine and create a database matching `DB_NAME`:
 CREATE DATABASE library_db;
 ```
 
-#### 5. Run the schema migrations
+### 5. Run the schema migrations
 
 This connects using your `.env` values and executes every `.sql` file in `src/database/` in order, creating the `users`, `categories`, `books`, and `bookSummaries` tables and applying the file-upload column additions:
 
@@ -130,13 +130,13 @@ npm run migrate
 
 You should see each filename printed with `True` next to it. If something prints `False`, the error message underneath it will tell you what failed (e.g. wrong credentials, database not reachable).
 
-#### 6. (Optional) Verify the database connection independently
+### 6. (Optional) Verify the database connection independently
 
 ```bash
 npm run test:db
 ```
 
-#### 7. Start the server
+### 7. Start the server
 
 ```bash
 npm start
@@ -152,11 +152,11 @@ curl http://localhost:5000/health
 
 which should return `{"status":"ok"}`.
 
-#### 8. Uploaded files
+### 8. Uploaded files
 
 Uploaded book files are written to `uploads/books/` inside the project folder; this directory is created automatically on first upload if it doesn't already exist. When deploying, make sure this folder is on **persistent** storage.
 
-#### 9. Creating the first admin account
+### 9. Creating the first admin account
 
 There is no API endpoint to create the first `ADMIN` user (by design — see [Assumptions](#assumptions)). After running migrations, register a normal account through `POST /api/auth/register`, then manually promote it in MySQL:
 
@@ -166,7 +166,7 @@ UPDATE users SET role = 'ADMIN' WHERE email = 'you@example.com';
 
 That admin account can then create librarian accounts via `POST /api/users/librarian`.
 
-### Environment Variables
+## Environment Variables
 
 | Variable          | Required            | Description                                              |
 |--------------------|----------------------|-------------------------------------------------------------|
@@ -181,7 +181,7 @@ That admin account can then create librarian accounts via `POST /api/users/libra
 | `AI_API_BASE_URL`  | Only for AI summaries| Base URL of an OpenAI-compatible chat completions API     |
 | `AI_API_TOKEN`     | Only for AI summaries| Bearer token for the AI provider                          |
 
-### Database Schema
+## Database Schema
 
 | Table            | Purpose                                                                 |
 |-------------------|--------------------------------------------------------------------------|
@@ -190,25 +190,25 @@ That admin account can then create librarian accounts via `POST /api/users/libra
 | `books`           | Catalog entries, linked to a category. Tracks `total_copies` / `available_copies` (physical-stock fields, currently unused by the digital read flow — see [Assumptions](#assumptions)), plus `filePath`, `fileName`, and `fileType` (`PDF`/`EPUB`) for the uploaded digital copy. |
 | `bookSummaries`   | One AI-generated summary per book (1:1 with `books`), cached so repeated requests skip the AI call. |
 
-### Implemented Features
+## Implemented Features
 
-#### Authentication & Authorization
+### Authentication & Authorization
 - Member self-registration (`POST /api/auth/register`) with `bcryptjs` password hashing
 - Login (`POST /api/auth/login`) issuing a signed JWT
 - `authenticate` middleware verifying the JWT on protected routes and attaching the user to `req.user`
 - `allowRoles` middleware restricting specific routes to `LIBRARIAN`/`ADMIN`
 - Three-tier role system: `USER`, `LIBRARIAN`, `ADMIN`
 
-#### Staff Management
+### Staff Management
 - Admin-only endpoint to create librarian accounts (`POST /api/users/librarian`)
 
-#### Category Management
+### Category Management
 - Create a category (staff only)
 - List all categories (public)
 - Delete a category (staff only)
 - Category `ACTIVE`/`INACTIVE` status is checked when attaching a book to it
 
-#### Book Catalog
+### Book Catalog
 - Add a book (staff only), with an **optional** file upload in the same request
 - List active books (public), filterable by `categoryID`, `author` (partial match), and `available` (true/false)
 - Get a single book's details by ID (public)
@@ -217,40 +217,40 @@ That admin account can then create librarian accounts via `POST /api/users/libra
 - Duplicate-ISBN prevention on creation
 - Derived `availability` field (`AVAILABLE`/`UNAVAILABLE`) computed from copy counts on every read
 
-#### Digital Book Access
+### Digital Book Access
 - File upload on book creation, restricted to **PDF and EPUB**, capped at **20MB**, via `multer` disk storage with randomized on-disk filenames (the original filename is preserved separately as `fileName` for display)
 - Authenticated **read/download** endpoint (`GET /api/books/:bookID/read`) that streams the stored file back to the requesting user
 - Graceful error handling when a book has no associated file, or the file/book doesn't exist
 
-#### AI-Generated Summaries
+### AI-Generated Summaries
 - On-demand summary generation for any book via an OpenAI-compatible chat completions API
 - Summaries are cached in `bookSummaries` on first generation, so repeat requests for the same book are served from the database instead of calling the AI provider again
 - Provider/model metadata (`provider`, `model`, `generatedAt`) stored alongside each summary
 
-#### Cross-Cutting
+### Cross-Cutting
 - Centralized request validation via `express-validator` on every module (registration, login, book creation, search, ID params, etc.)
 - Consistent JSON response shape (`success`, `message`/`data`/`errors`) across all endpoints
 - `GET /health` liveness check for uptime monitors / load balancers
 - Idempotent-by-design schema migration script (`npm run migrate`) that applies every `.sql` file in order and logs per-file success/failure
 
-### API Endpoints
+## API Endpoints
 
 All request/response bodies are JSON unless noted otherwise. Protected endpoints require `Authorization: Bearer <token>`.
 
-#### Auth (`/api/auth`)
+### Auth (`/api/auth`)
 
 | Method | Endpoint     | Access | Description              |
 |--------|-------------|--------|---------------------------|
 | POST   | `/register` | Public | Register a new member     |
 | POST   | `/login`    | Public | Log in, receive a JWT     |
 
-#### Users (`/api/users`)
+### Users (`/api/users`)
 
 | Method | Endpoint      | Access | Description                     |
 |--------|---------------|--------|-----------------------------------|
 | POST   | `/librarian`  | Admin  | Create a new librarian account    |
 
-#### Categories (`/api/categories`)
+### Categories (`/api/categories`)
 
 | Method | Endpoint          | Access             | Description             |
 |--------|-------------------|--------------------|--------------------------|
@@ -258,7 +258,7 @@ All request/response bodies are JSON unless noted otherwise. Protected endpoints
 | GET    | `/`               | Public             | List all categories      |
 | DELETE | `/:categoryID`    | Librarian, Admin   | Delete a category        |
 
-#### Books (`/api/books`)
+### Books (`/api/books`)
 
 | Method | Endpoint          | Access             | Description                                                        |
 |--------|--------------------|--------------------|------------------------------------------------------------------------|
@@ -269,19 +269,19 @@ All request/response bodies are JSON unless noted otherwise. Protected endpoints
 | DELETE | `/:bookID`         | Librarian, Admin   | Soft-delete a book (marks it `INACTIVE`)                               |
 | GET    | `/:bookID/read`    | Authenticated      | Streams/downloads the book's stored file                               |
 
-#### AI (`/api`)
+### AI (`/api`)
 
 | Method | Endpoint                    | Access        | Description                                              |
 |--------|------------------------------|---------------|------------------------------------------------------------|
 | GET    | `/books/:bookID/summary`    | Authenticated | Returns a cached summary, or generates and caches one via the AI provider on first request |
 
-#### Health
+### Health
 
 | Method | Endpoint  | Access | Description        |
 |--------|-----------|--------|----------------------|
 | GET    | `/health` | Public | Liveness check       |
 
-### Roles & Permissions
+## Roles & Permissions
 
 | Role        | Can do                                                                         |
 |-------------|------------------------------------------------------------------------------------|
@@ -292,9 +292,9 @@ All request/response bodies are JSON unless noted otherwise. Protected endpoints
 `role` defaults to `USER` at the database level, so anyone can self-register as a member through `/api/auth/register`; `LIBRARIAN` and `ADMIN` accounts must be provisioned separately (see [step 9 of Setup](#9-creating-the-first-admin-account) — there's no self-registration path for staff roles, and no `ADMIN`-creation endpoint at all).
 
 
-### Possible Enhancements
+## Possible Enhancements
 
-#### Digital access
+### Digital access
 - Move file storage to cloud object storage (e.g. S3) so it works across multiple instances and survives redeploys
 - Reading progress tracking (last page/position) per user per book
 - Bookmarks, highlights, and notes per user per book
@@ -302,13 +302,11 @@ All request/response bodies are JSON unless noted otherwise. Protected endpoints
 - Concurrent-access limits, or repurposing `total_copies`/`available_copies` into a genuinely digital concept
 - In-browser reading view (paginated rendering) rather than only file download
 
-#### General API improvements
+### General API improvements
 - Pagination, sorting, and total counts on list endpoints
 - Refresh tokens and a logout/token-revocation mechanism
 - Book update (`PUT`/`PATCH /books/:bookID`) and category update endpoints, including replacing an uploaded file
 - User self-service (view/update own profile, change password)
 - A proper first-admin bootstrap mechanism (seed script or one-time setup endpoint)
 - Centralized error-handling middleware instead of per-controller try/catch
-- Automated tests (unit + integration) and CI
-- API documentation (OpenAPI/Swagger)
-- Rate limiting (especially on `/auth/login` and the AI summary endpoint) and structured request logging.
+- Rate limiting (especially on `/auth/login` and the AI summary endpoint) and structured request logging
