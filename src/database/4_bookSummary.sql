@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS bookSummaries (
+    summaryID INT PRIMARY KEY AUTO_INCREMENT,
+
+    bookID INT NOT NULL UNIQUE,
+
+    summary TEXT NOT NULL,
+
+    provider VARCHAR(100) DEFAULT 'fallback',
+
+    model VARCHAR(100),
+
+    generatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    updatedAt TIMESTAMP
+        DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_summariesBook
+        FOREIGN KEY (bookID)
+        REFERENCES books(bookID)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+);
