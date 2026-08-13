@@ -1,312 +1,1140 @@
-## Library Management System API
+# Library Management API
 
-A REST API for an **online library (e-library)** — members can browse, search, and read/download digital books (PDF/EPUB), while librarians and admins manage the catalog and staff accounts. Built with Node.js, Express, and MySQL, with JWT authentication, role-based access control, and AI-generated book summaries.
+A REST API for managing users, librarians, categories, books, uploaded book files, and AI-generated book summaries.
 
-## Table of Contents
+This guide is intentionally written as a **step-by-step API testing workflow**. Follow the steps in order because the output of one step is used in the next.
 
-- [Tech Stack](#tech-stack)
-- [Architecture & Approach](#architecture--approach)
-- [Project Structure](#project-structure)
-- [Setup Instructions](#setup-instructions-run-on-any-machine)
-- [Environment Variables](#environment-variables)
-- [Database Schema](#database-schema)
-- [Implemented Features](#implemented-features)
-- [API Endpoints](#api-endpoints)
-- [Roles & Permissions](#roles--permissions)
-- [Assumptions](#assumptions)
-- [Possible Enhancements](#possible-enhancements)
+---
 
-## Tech Stack
+# 1. Technology Stack
 
-| Layer            | Technology                              |
-|-------------------|-------------------------------------------|
-| Runtime          | Node.js (v18+)                            |
-| Framework        | Express.js                                |
-| Database         | MySQL (via `mysql2/promise`)              |
-| Auth             | JWT (`jsonwebtoken`) + `bcryptjs`         |
-| Validation       | `express-validator`                       |
-| File uploads     | `multer` (disk storage)                   |
-| AI Integration   | OpenAI-compatible chat completions API    |
+- Node.js
+- Express.js
+- MySQL
+- JWT Authentication
+- bcryptjs
+- express-validator
+- Multer
+- OpenAI-compatible AI API
 
-## Architecture & Approach
+---
 
-The codebase follows a **layered, modular architecture**. Each domain (`auth`, `users`, `categories`, `books`, `ai`) is a self-contained module under `src/modules/`, and every module is split into four layers:
+# 2. Before You Start
 
-```
-Routes  →  Controller  →  Service  →  Repository  →  MySQL
-```
-
-- **Routes** wire URLs to controllers and attach `authenticate` / `allowRoles` / file-upload middleware and validation chains.
-- **Controllers** handle HTTP concerns only: reading `req`, checking validation results, and shaping the `res` payload. They contain no business logic.
-- **Services** hold the business rules (duplicate checks, password hashing, availability calculations, cache-or-generate logic for AI summaries, file-path bookkeeping, etc.) and are the only layer allowed to combine data from multiple repositories.
-- **Repositories** are the sole layer that talks to the database. They run parameterized queries and return plain rows, with no business logic.
-
-This separation keeps each layer independently testable and makes it straightforward to swap out a layer (e.g. the database driver, the file storage backend, or the AI provider) without touching the others. Dependencies are constructed and wired manually in each `*.routes.js` file (e.g. `new BookService(bookRepository, categoryRepository)`), rather than through a DI framework, keeping the wiring explicit and easy to trace.
-
-A single shared MySQL connection pool (`src/config/databaseConfig.js`) is imported by every repository, rather than each module opening its own connection.
-
-**File handling approach:** book files are uploaded via `multipart/form-data`, validated and stored on local disk by a dedicated `multer` middleware (`bookFileUpload.middleware.js`), and only the resulting path/name/type are persisted in the `books` table — the database never stores file bytes. Reading a book streams that stored file back through an authenticated endpoint rather than exposing the uploads folder directly.
-
-## Project Structure
-
-```
-src/
-├── app.js                          # Express app: middleware + route mounting
-├── server.js                       # Entry point: loads env vars, starts the HTTP server
-├── testDB.js                       # One-off script to sanity-check the DB connection
-├── config/
-│   └── databaseConfig.js           # Shared MySQL connection pool
-├── database/
-│   ├── 1_users.sql
-│   ├── 2_categories.sql
-│   ├── 3_books.sql
-│   ├── 4_bookSummary.sql
-│   ├── 5_updateBooksTable.sql      # Adds filePath / fileType to books
-│   └── 6_updateBookFileName.sql    # Adds fileName to books
-├── middleware/
-│   ├── auth.middleware.js          # Verifies JWT, attaches req.user
-│   ├── role.middleware.js          # Restricts a route to specific roles
-│   └── bookFileUpload.middleware.js # Multer config: PDF/EPUB only, 20MB limit, disk storage
-├── scripts/
-│   └── migrate.js                  # Runs every .sql file in src/database against MySQL
-└── modules/
-    ├── auth/                       # Registration, login
-    ├── users/                      # Librarian account creation
-    ├── categories/                 # Book category CRUD
-    ├── books/                      # Book catalog CRUD, search, filtering, file upload & read
-    └── ai/                         # AI-generated book summaries (with DB caching)
-```
-
-## Setup Instructions
-
-### Prerequisites
-
-- **Node.js 18+** and npm
-- A running **MySQL server** (local install, Docker container, or a cloud instance)
-- An **OpenAI-compatible API key** (only required for the AI summary feature — everything else works without it)
-
-### 1. Get the code onto the machine
-
-Clone the repository (or copy the project folder) onto the target machine, then move into it:
-
-```bash
-git clone <your-repository-url>
-cd <project-folder>
-```
-
-### 2. Install dependencies
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-This installs Express, MySQL driver, JWT/bcrypt, express-validator, multer, cors, and dotenv as listed in `package.json`.
+Create a `.env` file:
 
-### 3. Configure environment variables
+```env
+PORT=5000
 
-Copy the example file and fill in your own values:
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+DB_NAME=library_db
 
-```bash
-cp .env.example .env
+JWT_SECRET=your_long_random_secret
+JWT_EXPIRES_IN=1d
+
+AI_API_BASE_URL=https://your-ai-provider.example.com
+AI_API_TOKEN=your_ai_token
 ```
 
-See [Environment Variables](#environment-variables) below for what each one means. At minimum you must set the `DB_*` values to match a MySQL server this machine can reach, and `JWT_SECRET` to any long random string.
-
-### 4. Create an empty database
-
-Log into MySQL on the target machine and create a database matching `DB_NAME`:
+Create the database:
 
 ```sql
 CREATE DATABASE library_db;
 ```
 
-### 5. Run the schema migrations
-
-This connects using your `.env` values and executes every `.sql` file in `src/database/` in order, creating the `users`, `categories`, `books`, and `bookSummaries` tables and applying the file-upload column additions:
+Run migrations:
 
 ```bash
-npm run migrate
+node src/scripts/migrate.js
 ```
 
-You should see each filename printed with `True` next to it. If something prints `False`, the error message underneath it will tell you what failed (e.g. wrong credentials, database not reachable).
-
-### 6. (Optional) Verify the database connection independently
+Start the API:
 
 ```bash
-npm run test:db
+node src/server.js
 ```
 
-### 7. Start the server
+Base URL:
 
-```bash
-npm start
+```text
+http://localhost:5000
 ```
 
-For local development, use `npm run dev` instead, which restarts the server automatically on file changes (via `nodemon`).
+---
 
-The API is now available at `http://localhost:5000` (or whatever `PORT` you set in `.env`). Confirm it's running with:
+# 3. Complete Testing Flow
 
-```bash
-curl http://localhost:5000/health
+Follow this sequence:
+
+```text
+STEP 1  → Check API health
+STEP 2  → Register a normal USER
+STEP 3  → Login as USER
+STEP 4  → Promote that USER to ADMIN in the database
+STEP 5  → Login again and obtain an ADMIN token
+STEP 6  → Use ADMIN to create a LIBRARIAN
+STEP 7  → Login as the LIBRARIAN
+STEP 8  → Use LIBRARIAN to create categories
+STEP 9  → Use LIBRARIAN to create books
+STEP 10 → Test public book APIs
+STEP 11 → Test protected book-file API
+STEP 12 → Test AI book summaries
+STEP 13 → Test role restrictions and invalid requests
+STEP 14 → Delete test data and verify results
 ```
 
-which should return `{"status":"ok"}`.
+---
 
-### 8. Uploaded files
+# STEP 1 — Check API Health
 
-Uploaded book files are written to `uploads/books/` inside the project folder; this directory is created automatically on first upload if it doesn't already exist. When deploying, make sure this folder is on **persistent** storage.
+Before testing anything else:
 
-### 9. Creating the first admin account
+```http
+GET /health
+```
 
-There is no API endpoint to create the first `ADMIN` user (by design — see [Assumptions](#assumptions)). After running migrations, register a normal account through `POST /api/auth/register`, then manually promote it in MySQL:
+Example:
+
+```text
+http://localhost:5000/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Expected status:
+
+```text
+200 OK
+```
+
+Do not continue until this works.
+
+---
+
+# STEP 2 — Register a Normal User
+
+Create your first user.
+
+```http
+POST /api/auth/register
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "firstName": "Pinki",
+  "lastName": "Kumari",
+  "email": "admin@example.com",
+  "password": "password123"
+}
+```
+
+Expected status:
+
+```text
+201 Created
+```
+
+This account is initially created as:
+
+```text
+Role: USER
+Status: ACTIVE
+```
+
+At this point, save:
+
+```text
+Email: admin@example.com
+Password: password123
+```
+
+You will use this same account in the next steps.
+
+---
+
+# STEP 3 — Login as the USER
+
+Login using the account created in Step 2.
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "email": "admin@example.com",
+  "password": "password123"
+}
+```
+
+Expected response:
+
+```json
+{
+  "user": {
+    "userID": 1,
+    "firstName": "Pinki",
+    "lastName": "Kumari",
+    "email": "admin@example.com",
+    "role": "USER",
+    "status": "ACTIVE"
+  },
+  "token": "your_jwt_token"
+}
+```
+
+Expected status:
+
+```text
+200 OK
+```
+
+Save the token temporarily.
+
+> At this stage, the token belongs to a `USER`. It cannot access ADMIN-only or LIBRARIAN-only endpoints.
+
+---
+
+# STEP 4 — Promote the USER to ADMIN
+
+The current API does not expose a public endpoint for promoting a user to `ADMIN`.
+
+For initial testing, update the test user's role directly in MySQL.
+
+First, check the user:
 
 ```sql
-UPDATE users SET role = 'ADMIN' WHERE email = 'you@example.com';
+SELECT userID, firstName, lastName, email, role, status
+FROM users
+WHERE email = 'admin@example.com';
 ```
 
-That admin account can then create librarian accounts via `POST /api/users/librarian`.
+Then promote the user:
 
-## Environment Variables
+```sql
+UPDATE users
+SET role = 'ADMIN'
+WHERE email = 'admin@example.com';
+```
 
-| Variable          | Required            | Description                                              |
-|--------------------|----------------------|-------------------------------------------------------------|
-| `PORT`             | No (defaults to 5000)| Port the HTTP server listens on                          |
-| `DB_HOST`          | Yes                  | MySQL host                                                |
-| `DB_PORT`          | Yes                  | MySQL port                                                |
-| `DB_USER`          | Yes                  | MySQL user                                                |
-| `DB_PASSWORD`      | Yes                  | MySQL password                                            |
-| `DB_NAME`          | Yes                  | MySQL database name                                       |
-| `JWT_SECRET`       | Yes                  | Secret used to sign/verify JWTs                           |
-| `JWT_EXPIRES_IN`   | Yes                  | JWT expiry (e.g. `1d`, `12h`)                              |
-| `AI_API_BASE_URL`  | Only for AI summaries| Base URL of an OpenAI-compatible chat completions API     |
-| `AI_API_TOKEN`     | Only for AI summaries| Bearer token for the AI provider                          |
+Verify:
 
-## Database Schema
+```sql
+SELECT userID, email, role
+FROM users
+WHERE email = 'admin@example.com';
+```
 
-| Table            | Purpose                                                                 |
-|-------------------|--------------------------------------------------------------------------|
-| `users`           | Members and staff. `role` is one of `USER`, `LIBRARIAN`, `ADMIN`.       |
-| `categories`      | Book categories, with `ACTIVE`/`INACTIVE` status.                      |
-| `books`           | Catalog entries, linked to a category. Tracks `total_copies` / `available_copies` (physical-stock fields, currently unused by the digital read flow — see [Assumptions](#assumptions)), plus `filePath`, `fileName`, and `fileType` (`PDF`/`EPUB`) for the uploaded digital copy. |
-| `bookSummaries`   | One AI-generated summary per book (1:1 with `books`), cached so repeated requests skip the AI call. |
+Expected result:
 
-## Implemented Features
+```text
+role = ADMIN
+```
 
-### Authentication & Authorization
-- Member self-registration (`POST /api/auth/register`) with `bcryptjs` password hashing
-- Login (`POST /api/auth/login`) issuing a signed JWT
-- `authenticate` middleware verifying the JWT on protected routes and attaching the user to `req.user`
-- `allowRoles` middleware restricting specific routes to `LIBRARIAN`/`ADMIN`
-- Three-tier role system: `USER`, `LIBRARIAN`, `ADMIN`
+Important: the JWT from Step 3 may still contain the old `USER` role, so login again.
 
-### Staff Management
-- Admin-only endpoint to create librarian accounts (`POST /api/users/librarian`)
+---
 
-### Category Management
-- Create a category (staff only)
-- List all categories (public)
-- Delete a category (staff only)
-- Category `ACTIVE`/`INACTIVE` status is checked when attaching a book to it
+# STEP 5 — Login Again as ADMIN
 
-### Book Catalog
-- Add a book (staff only), with an **optional** file upload in the same request
-- List active books (public), filterable by `categoryID`, `author` (partial match), and `available` (true/false)
-- Get a single book's details by ID (public)
-- Keyword search across title, author, and description (public)
-- Soft-delete a book (staff only) — flips `status` to `INACTIVE` instead of removing the row
-- Duplicate-ISBN prevention on creation
-- Derived `availability` field (`AVAILABLE`/`UNAVAILABLE`) computed from copy counts on every read
+Use the same credentials:
 
-### Digital Book Access
-- File upload on book creation, restricted to **PDF and EPUB**, capped at **20MB**, via `multer` disk storage with randomized on-disk filenames (the original filename is preserved separately as `fileName` for display)
-- Authenticated **read/download** endpoint (`GET /api/books/:bookID/read`) that streams the stored file back to the requesting user
-- Graceful error handling when a book has no associated file, or the file/book doesn't exist
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
 
-### AI-Generated Summaries
-- On-demand summary generation for any book via an OpenAI-compatible chat completions API
-- Summaries are cached in `bookSummaries` on first generation, so repeat requests for the same book are served from the database instead of calling the AI provider again
-- Provider/model metadata (`provider`, `model`, `generatedAt`) stored alongside each summary
+Body:
 
-### Cross-Cutting
-- Centralized request validation via `express-validator` on every module (registration, login, book creation, search, ID params, etc.)
-- Consistent JSON response shape (`success`, `message`/`data`/`errors`) across all endpoints
-- `GET /health` liveness check for uptime monitors / load balancers
-- Idempotent-by-design schema migration script (`npm run migrate`) that applies every `.sql` file in order and logs per-file success/failure
+```json
+{
+  "email": "admin@example.com",
+  "password": "password123"
+}
+```
 
-## API Endpoints
+Expected result:
 
-All request/response bodies are JSON unless noted otherwise. Protected endpoints require `Authorization: Bearer <token>`.
+```json
+{
+  "user": {
+    "email": "admin@example.com",
+    "role": "ADMIN"
+  },
+  "token": "new_admin_jwt"
+}
+```
 
-### Auth (`/api/auth`)
+Save this token as:
 
-| Method | Endpoint     | Access | Description              |
-|--------|-------------|--------|---------------------------|
-| POST   | `/register` | Public | Register a new member     |
-| POST   | `/login`    | Public | Log in, receive a JWT     |
+```text
+ADMIN_TOKEN
+```
 
-### Users (`/api/users`)
+For every ADMIN request:
 
-| Method | Endpoint      | Access | Description                     |
-|--------|---------------|--------|-----------------------------------|
-| POST   | `/librarian`  | Admin  | Create a new librarian account    |
+```http
+Authorization: Bearer <ADMIN_TOKEN>
+```
 
-### Categories (`/api/categories`)
+---
 
-| Method | Endpoint          | Access             | Description             |
-|--------|-------------------|--------------------|--------------------------|
-| POST   | `/`               | Librarian, Admin   | Create a category        |
-| GET    | `/`               | Public             | List all categories      |
-| DELETE | `/:categoryID`    | Librarian, Admin   | Delete a category        |
+# STEP 6 — Use ADMIN to Create a LIBRARIAN
 
-### Books (`/api/books`)
+Now use the ADMIN token.
 
-| Method | Endpoint          | Access             | Description                                                        |
-|--------|--------------------|--------------------|------------------------------------------------------------------------|
-| POST   | `/`                | Librarian, Admin   | Add a new book. `multipart/form-data` with fields `title`, `author`, `isbn`, `description`, `categoryID`, `total_copies`, and an optional `bookFile` (PDF/EPUB, ≤20MB) |
-| GET    | `/`                | Public             | List active books (filter by `categoryID`, `author`, `available`)      |
-| GET    | `/search`          | Public             | Keyword search across title, author, description (`?keyword=`)         |
-| GET    | `/:bookID`         | Public             | Get a single book's details                                            |
-| DELETE | `/:bookID`         | Librarian, Admin   | Soft-delete a book (marks it `INACTIVE`)                               |
-| GET    | `/:bookID/read`    | Authenticated      | Streams/downloads the book's stored file                               |
+```http
+POST /api/users/librarian
+Authorization: Bearer <ADMIN_TOKEN>
+Content-Type: application/json
+```
 
-### AI (`/api`)
+Body:
 
-| Method | Endpoint                    | Access        | Description                                              |
-|--------|------------------------------|---------------|------------------------------------------------------------|
-| GET    | `/books/:bookID/summary`    | Authenticated | Returns a cached summary, or generates and caches one via the AI provider on first request |
+```json
+{
+  "firstName": "John",
+  "lastName": "Librarian",
+  "email": "librarian@example.com",
+  "password": "password123"
+}
+```
 
-### Health
+Expected status:
 
-| Method | Endpoint  | Access | Description        |
-|--------|-----------|--------|----------------------|
-| GET    | `/health` | Public | Liveness check       |
+```text
+201 Created
+```
 
-## Roles & Permissions
+The new account should have:
 
-| Role        | Can do                                                                         |
-|-------------|------------------------------------------------------------------------------------|
-| `USER`      | Register, log in, browse/search books and categories, **read/download book files**, view AI summaries |
-| `LIBRARIAN` | Everything `USER` can, plus create/delete books (including uploading files) and categories |
-| `ADMIN`     | Everything `LIBRARIAN` can, plus create new librarian accounts                     |
+```text
+Role: LIBRARIAN
+Status: ACTIVE
+```
 
-`role` defaults to `USER` at the database level, so anyone can self-register as a member through `/api/auth/register`; `LIBRARIAN` and `ADMIN` accounts must be provisioned separately (see [step 9 of Setup](#9-creating-the-first-admin-account) — there's no self-registration path for staff roles, and no `ADMIN`-creation endpoint at all).
+This proves that:
+
+```text
+ADMIN → can create LIBRARIAN
+```
+
+---
+
+# STEP 7 — Login as the LIBRARIAN
+
+Now login using the librarian account.
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "email": "librarian@example.com",
+  "password": "password123"
+}
+```
+
+Expected status:
+
+```text
+200 OK
+```
+
+Save the returned token as:
+
+```text
+LIBRARIAN_TOKEN
+```
+
+From this point onward, use:
+
+```http
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+The librarian will now perform the main library-management operations.
+
+---
+
+# STEP 8 — LIBRARIAN Creates a Category
+
+```http
+POST /api/categories
+Authorization: Bearer <LIBRARIAN_TOKEN>
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "categoryName": "Computer Science",
+  "categoryDescription": "Books related to programming and software development."
+}
+```
+
+Expected status:
+
+```text
+201 Created
+```
+
+Save the returned category ID:
+
+```text
+CATEGORY_ID
+```
+
+Now verify that the category exists.
+
+```http
+GET /api/categories
+```
+
+Expected status:
+
+```text
+200 OK
+```
+
+Find and save the ID of the category you created.
+
+---
+
+# STEP 9 — LIBRARIAN Creates a Book
+
+The create-book endpoint uses:
+
+```text
+multipart/form-data
+```
+
+Use:
+
+```http
+POST /api/books
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Add these fields:
+
+| Key | Type | Example |
+|---|---|---|
+| `title` | Text | Clean Code |
+| `author` | Text | Robert C. Martin |
+| `isbn` | Text | 9780132350884 |
+| `description` | Text | A book about writing maintainable code. |
+| `categoryID` | Text | `CATEGORY_ID` |
+| `total_copies` | Text | 5 |
+
+Expected status:
+
+```text
+201 Created
+```
+
+Save:
+
+```text
+BOOK_ID
+```
+
+---
+
+# STEP 10 — LIBRARIAN Creates a Book With a File
+
+Use the same endpoint:
+
+```http
+POST /api/books
+Authorization: Bearer <LIBRARIAN_TOKEN>
+Content-Type: multipart/form-data
+```
+
+Text fields:
+
+```text
+title = The Pragmatic Programmer
+author = Andrew Hunt
+isbn = 9780201616224
+description = A software development book
+categoryID = CATEGORY_ID
+total_copies = 3
+```
+
+Add a file using the exact field name:
+
+```text
+bookFile
+```
+
+Allowed file types:
+
+```text
+.pdf
+.epub
+```
+
+Maximum size:
+
+```text
+20 MB
+```
+
+Expected status:
+
+```text
+201 Created
+```
+
+Save this book's ID as:
+
+```text
+BOOK_WITH_FILE_ID
+```
+
+---
+
+# STEP 11 — Test Public Book APIs
+
+These endpoints do not require authentication.
+
+## Get All Books
+
+```http
+GET /api/books
+```
+
+Expected:
+
+```text
+200 OK
+```
+
+## Filter by Category
+
+```http
+GET /api/books?categoryID=1
+```
+
+## Filter by Author
+
+```http
+GET /api/books?author=Robert
+```
+
+## Show Only Available Books
+
+```http
+GET /api/books?available=true
+```
+
+## Search Books
+
+```http
+GET /api/books/search?keyword=clean
+```
+
+Expected:
+
+```text
+200 OK
+```
+
+## Get Book by ID
+
+```http
+GET /api/books/BOOK_ID
+```
+
+Expected:
+
+```text
+200 OK
+```
+
+---
+
+# STEP 12 — Test Reading the Uploaded Book File
+
+Use the ID saved in Step 10.
+
+```http
+GET /api/books/BOOK_WITH_FILE_ID/read
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Expected:
+
+```text
+200 OK
+```
+
+The API returns the stored book file.
+
+Also test the endpoint without a token.
+
+Expected:
+
+```text
+401 Unauthorized
+```
+
+---
+
+# STEP 13 — Test AI Book Summary
+
+Use any authenticated token.
+
+```http
+GET /api/books/BOOK_ID/summary
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Expected status:
+
+```text
+200 OK
+```
+
+On the first request:
+
+```text
+Book details
+   ↓
+AI provider
+   ↓
+Summary generated
+   ↓
+Summary saved in database
+   ↓
+Response returned
+```
+
+Send the same request again:
+
+```http
+GET /api/books/BOOK_ID/summary
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+The saved summary should be returned from the database instead of generating a new one.
+
+Required `.env` values:
+
+```env
+AI_API_BASE_URL=...
+AI_API_TOKEN=...
+```
+
+---
+
+# STEP 14 — Test USER Permissions
+
+Register another normal user.
+
+```http
+POST /api/auth/register
+```
+
+Then login and save:
+
+```text
+USER_TOKEN
+```
+
+Now try creating a category:
+
+```http
+POST /api/categories
+Authorization: Bearer <USER_TOKEN>
+```
+
+Expected:
+
+```text
+403 Forbidden
+```
+
+Try creating a librarian:
+
+```http
+POST /api/users/librarian
+Authorization: Bearer <USER_TOKEN>
+```
+
+Expected:
+
+```text
+403 Forbidden
+```
+
+This verifies:
+
+```text
+USER ≠ LIBRARIAN
+USER ≠ ADMIN
+```
+
+---
+
+# STEP 15 — Test LIBRARIAN Permissions
+
+Use:
+
+```text
+LIBRARIAN_TOKEN
+```
+
+Try:
+
+```http
+POST /api/users/librarian
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Expected:
+
+```text
+403 Forbidden
+```
+
+This verifies:
+
+```text
+LIBRARIAN → can manage books/categories
+LIBRARIAN → cannot create another librarian
+```
+
+---
+
+# STEP 16 — Test Missing or Invalid Authentication
+
+For a protected endpoint:
+
+```http
+POST /api/categories
+```
+
+## No token
+
+Expected:
+
+```text
+401 Unauthorized
+```
+
+## Invalid token
+
+```http
+Authorization: Bearer invalid-token
+```
+
+Expected:
+
+```text
+401 Unauthorized
+```
+
+## Wrong format
+
+```http
+Authorization: Token abc123
+```
+
+Expected:
+
+```text
+401 Unauthorized
+```
+
+---
+
+# STEP 17 — Test Validation Errors
+
+## Register with invalid email
+
+```json
+{
+  "firstName": "Test",
+  "lastName": "User",
+  "email": "invalid-email",
+  "password": "password123"
+}
+```
+
+Expected:
+
+```text
+400 Bad Request
+```
+
+## Register with short password
+
+```json
+{
+  "firstName": "Test",
+  "lastName": "User",
+  "email": "test@example.com",
+  "password": "123"
+}
+```
+
+Expected:
+
+```text
+400 Bad Request
+```
+
+## Search without keyword
+
+```http
+GET /api/books/search
+```
+
+Expected:
+
+```text
+400 Bad Request
+```
+
+## Invalid Book ID
+
+```http
+GET /api/books/abc
+```
+
+Expected:
+
+```text
+400 Bad Request
+```
+
+## Non-existing Book
+
+```http
+GET /api/books/999999
+```
+
+Expected:
+
+```text
+404 Not Found
+```
+
+---
+
+# STEP 18 — Test Invalid File Upload
+
+Use:
+
+```http
+POST /api/books
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Try uploading:
+
+```text
+image.jpg
+```
+
+Expected:
+
+```text
+Request rejected
+```
+
+The API only accepts:
+
+```text
+.pdf
+.epub
+```
+
+Also test a file larger than:
+
+```text
+20 MB
+```
+
+---
+
+# STEP 19 — Delete a Book
+
+Use the librarian token:
+
+```http
+DELETE /api/books/BOOK_ID
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Expected:
+
+```text
+200 OK
+```
+
+Book deletion is a **soft delete**.
+
+The database status becomes:
+
+```text
+INACTIVE
+```
+
+Verify:
+
+```http
+GET /api/books
+```
+
+The deleted book should no longer appear in the active public list.
+
+---
+
+# STEP 20 — Delete a Category
+
+Use:
+
+```http
+DELETE /api/categories/CATEGORY_ID
+Authorization: Bearer <LIBRARIAN_TOKEN>
+```
+
+Expected:
+
+```text
+200 OK
+```
+
+Category deletion is a hard delete.
+
+Associated books use the database rule:
+
+```text
+ON DELETE SET NULL
+```
+
+Therefore, deleting a category does not necessarily delete its books.
+
+---
+
+# Complete Role Flow
+
+The complete recommended testing flow is:
+
+```text
+┌───────────────┐
+│ Register USER │
+└───────┬───────┘
+        ↓
+┌───────────────┐
+│ Login as USER │
+└───────┬───────┘
+        ↓
+┌─────────────────────────────┐
+│ Promote USER to ADMIN in DB │
+└───────────────┬─────────────┘
+                ↓
+┌────────────────────┐
+│ Login again as ADMIN│
+└──────────┬─────────┘
+           ↓
+┌────────────────────────┐
+│ ADMIN creates LIBRARIAN │
+└──────────┬─────────────┘
+           ↓
+┌──────────────────────────┐
+│ Login as LIBRARIAN       │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Create Category          │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Create Books + Upload    │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Test Public APIs         │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Test File Reading        │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Test AI Summary          │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Test USER restrictions   │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Test LIBRARIAN limits    │
+└──────────┬───────────────┘
+           ↓
+┌──────────────────────────┐
+│ Test validation/errors   │
+└──────────────────────────┘
+```
+
+---
+
+# Endpoint Summary
+
+## Health
+
+```text
+GET /health
+```
+
+## Authentication
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+```
+
+## Users
+
+```text
+POST /api/users/librarian
+```
+
+Requires:
+
+```text
+ADMIN
+```
+
+## Categories
+
+```text
+POST   /api/categories
+GET    /api/categories
+DELETE /api/categories/:categoryID
+```
+
+Create/delete requires:
+
+```text
+LIBRARIAN or ADMIN
+```
+
+## Books
+
+```text
+POST   /api/books
+GET    /api/books
+GET    /api/books/search
+GET    /api/books/:bookID
+DELETE /api/books/:bookID
+GET    /api/books/:bookID/read
+```
+
+Create/delete requires:
+
+```text
+LIBRARIAN or ADMIN
+```
+
+Reading a book file requires authentication.
+
+## AI
+
+```text
+GET /api/books/:bookID/summary
+```
+
+Requires authentication.
+
+---
+
+# Postman Environment
+
+Create these variables:
+
+| Variable | Value |
+|---|---|
+| `baseUrl` | `http://localhost:5000` |
+| `adminToken` | JWT after ADMIN login |
+| `librarianToken` | JWT after LIBRARIAN login |
+| `userToken` | JWT for normal USER |
+| `categoryID` | Created category ID |
+| `bookID` | Created book ID |
+| `bookWithFileID` | Book with uploaded file |
+
+Example:
+
+```text
+{{baseUrl}}/api/books/{{bookID}}
+```
+
+For protected endpoints:
+
+```text
+Authorization: Bearer {{librarianToken}}
+```
+
+---
 
 
-## Possible Enhancements
+# Important Note
 
-### Digital access
-- Move file storage to cloud object storage (e.g. S3) so it works across multiple instances and survives redeploys
-- Reading progress tracking (last page/position) per user per book
-- Bookmarks, highlights, and notes per user per book
-- Favorites / "my library" / reading lists per user
-- Concurrent-access limits, or repurposing `total_copies`/`available_copies` into a genuinely digital concept
-- In-browser reading view (paginated rendering) rather than only file download
+The testing workflow intentionally starts with a normal `USER` account and promotes that account to `ADMIN` directly in the database because the current API exposes an endpoint for:
 
-### General API improvements
-- Pagination, sorting, and total counts on list endpoints
-- Refresh tokens and a logout/token-revocation mechanism
-- Book update (`PUT`/`PATCH /books/:bookID`) and category update endpoints, including replacing an uploaded file
-- User self-service (view/update own profile, change password)
-- A proper first-admin bootstrap mechanism (seed script or one-time setup endpoint)
-- Centralized error-handling middleware instead of per-controller try/catch
-- Rate limiting (especially on `/auth/login` and the AI summary endpoint) and structured request logging
+```text
+ADMIN → Create LIBRARIAN
+```
+
+but does not expose a public endpoint for:
+
+```text
+USER → ADMIN promotion
+```
+
+Once the initial ADMIN test account exists, the rest of the API can be tested through the intended role-based flow:
+
+```text
+ADMIN
+   ↓
+Creates LIBRARIAN
+   ↓
+LIBRARIAN
+   ↓
+Manages Categories and Books
+   ↓
+USER
+   ↓
+Uses authenticated features and tests permission restrictions
+```
